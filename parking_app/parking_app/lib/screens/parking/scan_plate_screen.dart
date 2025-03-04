@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../config/theme.dart';
 import '../../services/auth_service.dart';
 import '../../services/parking_service.dart';
+import 'package:flutter/services.dart';
 
 class ScanPlateScreen extends StatefulWidget {
   final String? spotId; // Opcional: ID del espacio si viene de reserva
@@ -102,21 +103,16 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
     try {
       await _cameraController!.initialize();
 
-      // Get available zoom range
+      // Forzar orientación vertical
+      await _cameraController!.lockCaptureOrientation(
+        DeviceOrientation.portraitUp,
+      );
+
+      // Configurar zoom y flash
       _minAvailableZoom = await _cameraController!.getMinZoomLevel();
       _maxAvailableZoom = await _cameraController!.getMaxZoomLevel();
-
-      // Get available exposure offset range
-      _minAvailableExposureOffset =
-          await _cameraController!.getMinExposureOffset();
-      _maxAvailableExposureOffset =
-          await _cameraController!.getMaxExposureOffset();
-
-      // Set initial values
       _currentZoom = 1.0;
-      _currentExposureOffset = 0.0;
       await _cameraController!.setZoomLevel(_currentZoom);
-      await _cameraController!.setExposureOffset(_currentExposureOffset);
       await _cameraController!.setFlashMode(_flashMode);
 
       if (mounted) {
@@ -175,6 +171,11 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
       // Enfocar primero para obtener una imagen nítida
       await _cameraController!.setFocusMode(FocusMode.auto);
       await Future.delayed(const Duration(milliseconds: 300));
+
+      // Asegurarse de que la orientación de captura esté bloqueada en modo vertical
+      await _cameraController!.lockCaptureOrientation(
+        DeviceOrientation.portraitUp,
+      );
 
       final XFile photo = await _cameraController!.takePicture();
 
@@ -446,30 +447,42 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
       );
     }
 
+    // Usar un enfoque más simple para mostrar la cámara
     return GestureDetector(
       onTapDown: (details) {
         if (_cameraController == null) return;
 
-        final double x = details.localPosition.dx;
-        final double y = details.localPosition.dy;
+        // Calcular punto de enfoque
+        final size = MediaQuery.of(context).size;
 
-        // Convertir coordenadas al espacio de la previsualización
-        final double previewWidth = MediaQuery.of(context).size.width;
-        final double previewHeight =
-            _cameraController!.value.aspectRatio * previewWidth;
+        // Importante: invertir las coordenadas x e y para corregir la orientación
+        // Esto es porque la cámara está en modo landscape internamente, aunque se muestre en portrait
+        final double xp = details.localPosition.dy / size.height;
+        final double yp = 1.0 - (details.localPosition.dx / size.width);
 
-        final double xp = x / previewWidth;
-        final double yp = y / previewHeight;
-
-        // Establecer punto de enfoque
+        // Establecer punto de enfoque con coordenadas corregidas
         if (xp >= 0 && xp <= 1 && yp >= 0 && yp <= 1) {
           _cameraController!.setFocusPoint(Offset(xp, yp));
           _cameraController!.setExposurePoint(Offset(xp, yp));
         }
       },
       child: Stack(
+        fit: StackFit.expand,
         children: [
-          Center(child: CameraPreview(_cameraController!)),
+          // Solución simple: usar Container con CameraPreview
+          Container(
+            color: Colors.black,
+            child: Center(
+              child: SizedBox(
+                width: double.infinity,
+                child: AspectRatio(
+                  aspectRatio: 1 / _cameraController!.value.aspectRatio,
+                  child: CameraPreview(_cameraController!),
+                ),
+              ),
+            ),
+          ),
+
           // Guía de alineación para la placa
           Center(
             child: Container(
@@ -487,6 +500,7 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
               ),
             ),
           ),
+
           // Controles de cámara
           Positioned(
             top: 16,
@@ -511,6 +525,7 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
               ],
             ),
           ),
+
           // Control de zoom
           Positioned(
             right: 16,
@@ -532,6 +547,7 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
               ),
             ),
           ),
+
           // Indicador de procesamiento
           if (_isProcessing)
             Container(

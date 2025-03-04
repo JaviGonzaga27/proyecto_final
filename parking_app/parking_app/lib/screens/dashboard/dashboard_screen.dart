@@ -4,7 +4,9 @@ import '../../services/auth_service.dart';
 import '../../config/theme.dart';
 import '../auth/login_screen.dart';
 import '../parking/scan_plate_screen.dart';
+import '../parking/parking_spot_screen.dart';
 import '../profile/profile_screen.dart';
+import '../vehicles/vehicles_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -17,7 +19,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   final List<Widget> _pages = [
     const DashboardHomePage(),
+    const ParkingSpotScreen(),
     const ScanPlateScreen(),
+    const VehiclesScreen(),
     const ProfileScreen(),
   ];
 
@@ -54,13 +58,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Inicio'),
           BottomNavigationBarItem(
+            icon: Icon(Icons.local_parking),
+            label: 'Parqueos',
+          ),
+          BottomNavigationBarItem(
             icon: Icon(Icons.camera_alt),
             label: 'Escanear',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.directions_car),
+            label: 'Vehículos',
           ),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Perfil'),
         ],
         currentIndex: _selectedIndex,
         selectedItemColor: AppTheme.primaryColor,
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
         onTap: _onItemTapped,
       ),
     );
