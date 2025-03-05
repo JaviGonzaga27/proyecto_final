@@ -12,6 +12,8 @@ router.delete('/:id', userController.deleteUser);
 
 router.get('/:id/vehicles', userController.getUserVehicles);
 router.post('/:id/vehicles', userController.addUserVehicle);
+router.put('/:id/vehicles/:vehicleId', userController.updateUserVehicle);
+router.delete('/:id/vehicles/:vehicleId', userController.deleteUserVehicle);
 router.get('/:id/parking-history', userController.getUserParkingHistory);
 router.get('/:id/profile', userController.getUserProfile);
 router.put('/:id/preferences', userController.updateUserPreferences);

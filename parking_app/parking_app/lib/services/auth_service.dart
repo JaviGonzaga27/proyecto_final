@@ -1,20 +1,20 @@
+import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 
 class AuthService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  User? get currentUser => _auth.currentUser;
-  Stream<User?> get authStateChanges => _auth.authStateChanges();
-
   // URL de tu API backend
   final String apiUrl = 'http://192.168.1.6:3000/api';
+
+  User? get currentUser => _auth.currentUser;
+  Stream<User?> get authStateChanges => _auth.authStateChanges();
 
   // Iniciar sesión con email y contraseña
   Future<User?> signInWithEmailAndPassword(
@@ -40,20 +40,9 @@ class AuthService extends ChangeNotifier {
           throw Exception("Token o UID nulos");
         }
 
-        print(
-          'Token obtenido: ${token.substring(0, 10)}...',
-        ); // Solo muestra los primeros 10 caracteres por seguridad
-        print('UID: $uid');
-
-        // URL completa para depuración
-        final url = Uri.parse('$apiUrl/auth/login');
-        print('URL de login: ${url.toString()}');
-
         // Enviar solicitud al backend
         final response = await http.post(
-          Uri.parse(
-            'http://192.168.1.6:3000/api/auth/login',
-          ), // URL hardcodeada para prueba
+          Uri.parse('$apiUrl/auth/login'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -62,20 +51,15 @@ class AuthService extends ChangeNotifier {
         );
 
         // Verificar respuesta
-        print('Respuesta del backend: ${response.statusCode}');
-        print('Cuerpo de respuesta: ${response.body}');
-
         if (response.statusCode == 200) {
           print('Login en backend exitoso');
         } else {
           print(
             'Error en login de backend: ${response.statusCode} - ${response.body}',
           );
-          // No interrumpimos el flujo por fallos del backend
         }
       } catch (backendError) {
         print('Error al comunicarse con el backend: $backendError');
-        // No interrumpimos el flujo por fallos del backend
       }
 
       notifyListeners();
@@ -113,27 +97,46 @@ class AuthService extends ChangeNotifier {
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        // También registramos el usuario en nuestro backend
+        // Obtener token para el backend
+        final token = await user?.getIdToken();
+
+        // Registrar en backend
         try {
           await http.post(
             Uri.parse('$apiUrl/auth/register'),
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': token != null ? 'Bearer $token' : '',
+            },
             body: jsonEncode({
               'email': user?.email,
-              'firstName': user?.displayName?.split(' ').first,
-              'lastName': user?.displayName?.split(' ').last,
-              'password':
-                  'google-auth-user', // Contraseña temporal para usuarios de Google
+              'firstName': user?.displayName?.split(' ').first ?? '',
+              'lastName': user?.displayName?.split(' ').last ?? '',
               'uid': user?.uid,
             }),
           );
-          print('Respuesta recibida del backend');
         } catch (e) {
           print('Error al registrar en backend: $e');
-          // No detenemos el flujo por error del backend
+        }
+      } else {
+        // Informar al backend del login con Google
+        final token = await user?.getIdToken();
+
+        try {
+          if (token != null && user?.uid != null) {
+            await http.post(
+              Uri.parse('$apiUrl/auth/login'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({'email': user?.email, 'uid': user?.uid}),
+            );
+          }
+        } catch (e) {
+          print('Error al informar login a backend: $e');
         }
       }
-      print('Respuesta recibida del backend');
 
       notifyListeners();
       return user;
@@ -171,21 +174,27 @@ class AuthService extends ChangeNotifier {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Registrar en nuestro backend
+      // Obtener token
+      final token = await user?.getIdToken();
+
+      // Registrar en backend
       try {
         await http.post(
           Uri.parse('$apiUrl/auth/register'),
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token != null ? 'Bearer $token' : '',
+          },
           body: jsonEncode({
             'email': email,
             'firstName': firstName,
             'lastName': lastName,
             'password': password,
+            'uid': user?.uid,
           }),
         );
       } catch (e) {
         print('Error al registrar en backend: $e');
-        // No detenemos el flujo por error del backend
       }
 
       notifyListeners();
@@ -211,5 +220,26 @@ class AuthService extends ChangeNotifier {
   // Obtener token ID para las peticiones al backend
   Future<String?> getIdToken() async {
     return await _auth.currentUser?.getIdToken();
+  }
+
+  // Verificar token con backend
+  Future<bool> verifyToken() async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return false;
+
+      final token = await user.getIdToken();
+
+      final response = await http.post(
+        Uri.parse('$apiUrl/auth/verify-token'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'idToken': token}),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error al verificar token: $e');
+      return false;
+    }
   }
 }

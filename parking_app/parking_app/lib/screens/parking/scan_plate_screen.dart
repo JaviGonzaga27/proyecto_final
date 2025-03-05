@@ -7,6 +7,8 @@ import 'package:provider/provider.dart';
 import '../../config/theme.dart';
 import '../../services/auth_service.dart';
 import '../../services/parking_service.dart';
+import '../../services/plate_recognition_service.dart';
+import '../../services/vehicle_service.dart';
 import 'package:flutter/services.dart';
 
 class ScanPlateScreen extends StatefulWidget {
@@ -38,10 +40,14 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
   FlashMode _flashMode = FlashMode.auto;
   final FocusNode _focusNode = FocusNode();
 
+  // Instancia del servicio de reconocimiento de placa
+  late PlateRecognitionService _plateRecognitionService;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _plateRecognitionService = PlateRecognitionService();
     _initializeCamera();
   }
 
@@ -183,10 +189,35 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
         _imageFile = File(photo.path);
       });
 
-      final inputImage = InputImage.fromFilePath(photo.path);
-      await _processImage(inputImage);
+      // Usar el servicio de reconocimiento de placas del backend
+      if (_imageFile != null) {
+        setState(() {
+          _isProcessing = true;
+        });
+
+        final result = await _plateRecognitionService.recognizePlate(
+          _imageFile!,
+        );
+
+        setState(() {
+          _isProcessing = false;
+          if (result['success'] == true) {
+            _detectedPlate = result['plateNumber'];
+          } else {
+            // Si el backend falla, intentar con el reconocimiento local
+            final inputImage = InputImage.fromFilePath(photo.path);
+            _processImage(inputImage);
+          }
+        });
+      }
     } catch (e) {
       print('Error taking picture: $e');
+
+      // En caso de error, intentar con el reconocimiento local
+      if (_imageFile != null) {
+        final inputImage = InputImage.fromFilePath(_imageFile!.path);
+        _processImage(inputImage);
+      }
     }
   }
 
@@ -204,10 +235,35 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
         _imageFile = File(pickedFile.path);
       });
 
-      final inputImage = InputImage.fromFilePath(pickedFile.path);
-      await _processImage(inputImage);
+      // Usar el servicio de reconocimiento de placas del backend
+      if (_imageFile != null) {
+        setState(() {
+          _isProcessing = true;
+        });
+
+        final result = await _plateRecognitionService.recognizePlate(
+          _imageFile!,
+        );
+
+        setState(() {
+          _isProcessing = false;
+          if (result['success'] == true) {
+            _detectedPlate = result['plateNumber'];
+          } else {
+            // Si el backend falla, intentar con el reconocimiento local
+            final inputImage = InputImage.fromFilePath(pickedFile.path);
+            _processImage(inputImage);
+          }
+        });
+      }
     } catch (e) {
       print('Error picking image: $e');
+
+      // En caso de error, intentar con el reconocimiento local
+      if (_imageFile != null) {
+        final inputImage = InputImage.fromFilePath(_imageFile!.path);
+        _processImage(inputImage);
+      }
     }
   }
 
@@ -215,6 +271,7 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
     if (_detectedPlate == null || _imageFile == null) return;
 
     final parkingService = ParkingService();
+    final vehicleService = VehicleService(); // Añadir esta línea
     final authService = Provider.of<AuthService>(context, listen: false);
     final user = authService.currentUser;
 
@@ -247,8 +304,9 @@ class _ScanPlateScreenState extends State<ScanPlateScreen>
           plateImage: _imageFile,
         );
       } else {
-        // De lo contrario, solo registrar la placa para futuro uso
-        success = await parkingService.addVehicle(
+        // De lo contrario, solo registrar la placa como vehículo usando VehicleService
+        success = await vehicleService.addVehicle(
+          // Cambiar esta línea
           _detectedPlate!,
           "Vehículo", // Valor por defecto
           "Desconocido", // Valor por defecto

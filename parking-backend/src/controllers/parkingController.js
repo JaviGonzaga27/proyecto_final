@@ -406,3 +406,38 @@ exports.deleteSpot = async (req, res) => {
     });
   }
 };
+
+exports.createTestSpots = async (req, res) => {
+  try {
+    const batch = db.batch();
+    
+    // Ejemplo de 12 espacios de estacionamiento distribuidos en 3 secciones y 2 pisos
+    for (let floor = 1; floor <= 2; floor++) {
+      for (let section of ['A', 'B', 'C']) {
+        for (let i = 1; i <= 4; i++) {
+          const spotRef = db.collection('parking_spots').doc();
+          batch.set(spotRef, {
+            number: `${section}${i}`,
+            section: section,
+            floor: floor,
+            status: 'available', // Todos disponibles inicialmente
+            createdAt: new Date().toISOString()
+          });
+        }
+      }
+    }
+    
+    await batch.commit();
+    
+    return res.status(201).json({
+      success: true,
+      message: 'Espacios de prueba creados correctamente'
+    });
+  } catch (error) {
+    console.error('Error al crear espacios de prueba:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error al crear espacios de prueba'
+    });
+  }
+};

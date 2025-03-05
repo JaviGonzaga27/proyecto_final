@@ -298,3 +298,96 @@ exports.updateUserPreferences = async (req, res) => {
     });
   }
 };
+
+// Añade este método a tu userController.js
+exports.updateUserVehicle = async (req, res) => {
+  try {
+    const { id, vehicleId } = req.params;
+    const { brand, model, color } = req.body;
+    
+    // Validar datos
+    if (!brand && !model && !color) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se debe proporcionar al menos un campo para actualizar'
+      });
+    }
+    
+    // Verificar que el vehículo exista y pertenezca al usuario
+    const vehicleDoc = await db.collection('vehicles').doc(vehicleId).get();
+    
+    if (!vehicleDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vehículo no encontrado'
+      });
+    }
+    
+    const vehicleData = vehicleDoc.data();
+    if (vehicleData.userId !== id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para modificar este vehículo'
+      });
+    }
+    
+    // Construir objeto con los campos a actualizar
+    const updateData = {};
+    if (brand) updateData.brand = brand;
+    if (model) updateData.model = model;
+    if (color) updateData.color = color;
+    updateData.updatedAt = new Date().toISOString();
+    
+    // Actualizar vehículo
+    await db.collection('vehicles').doc(vehicleId).update(updateData);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Vehículo actualizado correctamente'
+    });
+  } catch (error) {
+    console.error('Error al actualizar vehículo:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error al actualizar vehículo'
+    });
+  }
+};
+
+exports.deleteUserVehicle = async (req, res) => {
+  try {
+    const { id, vehicleId } = req.params;
+    
+    // Verificar que el vehículo exista y pertenezca al usuario
+    const vehicleDoc = await db.collection('vehicles').doc(vehicleId).get();
+    
+    if (!vehicleDoc.exists) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vehículo no encontrado'
+      });
+    }
+    
+    const vehicleData = vehicleDoc.data();
+    if (vehicleData.userId !== id) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para eliminar este vehículo'
+      });
+    }
+    
+    // Eliminar vehículo
+    await db.collection('vehicles').doc(vehicleId).delete();
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Vehículo eliminado correctamente'
+    });
+  } catch (error) {
+    console.error('Error al eliminar vehículo:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error al eliminar vehículo'
+    });
+  }
+};

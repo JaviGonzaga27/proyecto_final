@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../models/parking_spot_model.dart';
 import '../../services/parking_service.dart';
 import '../../services/auth_service.dart';
@@ -20,6 +22,17 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
   List<ParkingSpot> _spots = [];
   String _selectedFloor = 'Todos';
   String _selectedSection = 'Todos';
+  bool _showMap = false; // Toggle between map and list view
+
+  // Google Maps controller
+  GoogleMapController? _mapController;
+
+  // Default map position (you can adjust this to a location near you)
+  final LatLng _defaultPosition = const LatLng(37.7749, -122.4194);
+  LatLng _currentPosition = const LatLng(37.7749, -122.4194);
+
+  // Map markers
+  Map<MarkerId, Marker> _markers = {};
 
   List<String> _floors = ['Todos'];
   List<String> _sections = ['Todos'];
@@ -28,6 +41,50 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
   void initState() {
     super.initState();
     _loadSpots();
+    _getCurrentLocation();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return;
+      }
+
+      // Check for permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      // Get current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      setState(() {
+        _currentPosition = LatLng(position.latitude, position.longitude);
+      });
+
+      // Update camera position
+      if (_mapController != null) {
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(target: _currentPosition, zoom: 15),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error getting current location: $e');
+    }
   }
 
   Future<void> _loadSpots() async {
@@ -38,7 +95,7 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
     try {
       final spots = await _parkingService.getAllSpots();
 
-      // Extraer pisos y secciones únicas
+      // Extract unique floors and sections
       final floors =
           spots.map((spot) => spot.floor.toString()).toSet().toList();
       final sections = spots.map((spot) => spot.section).toSet().toList();
@@ -49,6 +106,9 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
         _sections = ['Todos', ...sections];
         _isLoading = false;
       });
+
+      // Create markers for map
+      _createMarkers(spots);
     } catch (e) {
       print('Error al cargar espacios: $e');
       setState(() {
@@ -61,15 +121,79 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
     }
   }
 
+  void _createMarkers(List<ParkingSpot> spots) {
+    final Map<String, List<ParkingSpot>> spotsBySection = {};
+
+    // Group spots by section
+    for (var spot in spots) {
+      if (!spotsBySection.containsKey(spot.section)) {
+        spotsBySection[spot.section] = [];
+      }
+      spotsBySection[spot.section]!.add(spot);
+    }
+
+    // Create a marker for each section
+    final Map<MarkerId, Marker> markers = {};
+    double offsetLat = 0.001;
+    double offsetLng = 0.001;
+
+    spotsBySection.forEach((section, sectionSpots) {
+      final availableSpots =
+          sectionSpots.where((s) => s.status == 'available').length;
+      final totalSpots = sectionSpots.length;
+      final markerId = MarkerId(section);
+
+      // Create positions around the current location
+      final position = LatLng(
+        _currentPosition.latitude +
+            (offsetLat * (section.codeUnitAt(0) % 5 - 2)),
+        _currentPosition.longitude +
+            (offsetLng * (section.codeUnitAt(0) % 3 - 1)),
+      );
+
+      // Set marker color based on availability
+      final BitmapDescriptor icon =
+          availableSpots > 0
+              ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
+              : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed);
+
+      // Create marker
+      final marker = Marker(
+        markerId: markerId,
+        position: position,
+        icon: icon,
+        infoWindow: InfoWindow(
+          title: 'Sección $section',
+          snippet: '$availableSpots/$totalSpots espacios disponibles',
+        ),
+        onTap: () {
+          // Filter spots by this section when tapped
+          setState(() {
+            _selectedSection = section;
+            _showMap = false; // Switch to list view to see the spots
+          });
+        },
+      );
+
+      markers[markerId] = marker;
+      offsetLat += 0.002;
+      offsetLng += 0.002;
+    });
+
+    setState(() {
+      _markers = markers;
+    });
+  }
+
   List<ParkingSpot> get filteredSpots {
     return _spots.where((spot) {
-      // Filtrar por piso si se ha seleccionado uno
+      // Filter by floor if one is selected
       if (_selectedFloor != 'Todos' &&
           spot.floor.toString() != _selectedFloor) {
         return false;
       }
 
-      // Filtrar por sección si se ha seleccionado una
+      // Filter by section if one is selected
       if (_selectedSection != 'Todos' && spot.section != _selectedSection) {
         return false;
       }
@@ -84,12 +208,30 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
       appBar: AppBar(
         title: const Text('Espacios de Parqueo'),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadSpots),
+          IconButton(
+            icon: Icon(_showMap ? Icons.list : Icons.map),
+            onPressed: () {
+              setState(() {
+                _showMap = !_showMap;
+              });
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              _loadSpots();
+              if (_showMap) {
+                _getCurrentLocation();
+              }
+            },
+          ),
         ],
       ),
       body:
           _isLoading
               ? const Center(child: CircularProgressIndicator())
+              : _showMap
+              ? _buildMapView()
               : Column(
                 children: [_buildFilters(), Expanded(child: _buildSpotsList())],
               ),
@@ -103,6 +245,87 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
         backgroundColor: AppTheme.primaryColor,
         child: const Icon(Icons.camera_alt),
       ),
+    );
+  }
+
+  Widget _buildMapView() {
+    return Stack(
+      children: [
+        GoogleMap(
+          initialCameraPosition: CameraPosition(
+            target: _currentPosition,
+            zoom: 15,
+          ),
+          myLocationEnabled: true,
+          myLocationButtonEnabled: true,
+          markers: Set<Marker>.of(_markers.values),
+          onMapCreated: (GoogleMapController controller) {
+            _mapController = controller;
+          },
+        ),
+        Positioned(
+          bottom: 16,
+          right: 16,
+          child: FloatingActionButton(
+            heroTag: 'location',
+            mini: true,
+            backgroundColor: Colors.white,
+            onPressed: () {
+              _getCurrentLocation();
+            },
+            child: const Icon(Icons.my_location, color: AppTheme.primaryColor),
+          ),
+        ),
+        Positioned(
+          top: 16,
+          left: 16,
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Leyenda:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: const BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Text('Espacios disponibles'),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Text('Sin espacios disponibles'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -455,7 +678,7 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
   }
 
   Future<void> _reserveSpot(ParkingSpot spot) async {
-    Navigator.pop(context); // Cerrar modal
+    Navigator.pop(context); // Close modal
 
     setState(() {
       _isLoading = true;
@@ -468,7 +691,7 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Espacio reservado correctamente')),
         );
-        await _loadSpots(); // Recargar espacios
+        await _loadSpots(); // Reload spots
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No se pudo reservar el espacio')),
@@ -487,21 +710,21 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
   }
 
   Future<void> _registerEntry(ParkingSpot spot) async {
-    Navigator.pop(context); // Cerrar modal
+    Navigator.pop(context); // Close modal
 
-    // Navegar a la pantalla de escaneo
+    // Navigate to scan screen
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => ScanPlateScreen(spotId: spot.id)),
     );
 
     if (result == true) {
-      await _loadSpots(); // Recargar espacios si se registró la entrada
+      await _loadSpots(); // Reload spots if entry was registered
     }
   }
 
   Future<void> _registerExit(ParkingSpot spot) async {
-    Navigator.pop(context); // Cerrar modal
+    Navigator.pop(context); // Close modal
 
     setState(() {
       _isLoading = true;
@@ -518,7 +741,7 @@ class _ParkingSpotScreenState extends State<ParkingSpotScreen> {
             ),
           ),
         );
-        await _loadSpots(); // Recargar espacios
+        await _loadSpots(); // Reload spots
       } else {
         ScaffoldMessenger.of(
           context,

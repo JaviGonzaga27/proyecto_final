@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
-import '../../services/parking_service.dart';
+import '../../services/vehicle_service.dart';
 import '../../config/theme.dart';
+import '../../models/vehicle_model.dart';
 import '../../widgets/info_card.dart';
 
 class VehiclesScreen extends StatefulWidget {
@@ -13,9 +14,9 @@ class VehiclesScreen extends StatefulWidget {
 }
 
 class _VehiclesScreenState extends State<VehiclesScreen> {
-  final ParkingService _parkingService = ParkingService();
+  final VehicleService _vehicleService = VehicleService();
   bool _isLoading = true;
-  List<Map<String, dynamic>> _vehicles = [];
+  List<VehicleModel> _vehicles = [];
 
   @override
   void initState() {
@@ -29,7 +30,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
     });
 
     try {
-      final vehicles = await _parkingService.getUserVehicles();
+      final vehicles = await _vehicleService.getUserVehicles();
       setState(() {
         _vehicles = vehicles;
         _isLoading = false;
@@ -134,7 +135,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                     });
 
                     try {
-                      final success = await _parkingService.addVehicle(
+                      final success = await _vehicleService.addVehicle(
                         _plateController.text.trim(),
                         _brandController.text.trim(),
                         _modelController.text.trim(),
@@ -177,14 +178,12 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
     );
   }
 
-  void _showEditVehicleDialog(Map<String, dynamic> vehicle) {
+  void _showEditVehicleDialog(VehicleModel vehicle) {
     final _formKey = GlobalKey<FormState>();
-    final _plateController = TextEditingController(
-      text: vehicle['plateNumber'],
-    );
-    final _brandController = TextEditingController(text: vehicle['brand']);
-    final _modelController = TextEditingController(text: vehicle['model']);
-    final _colorController = TextEditingController(text: vehicle['color']);
+    final _plateController = TextEditingController(text: vehicle.plateNumber);
+    final _brandController = TextEditingController(text: vehicle.brand);
+    final _modelController = TextEditingController(text: vehicle.model);
+    final _colorController = TextEditingController(text: vehicle.color);
 
     showDialog(
       context: context,
@@ -272,9 +271,13 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                     });
 
                     try {
-                      // Aquí implementarías la actualización del vehículo
-                      // por ahora solo simulamos que se actualizó
-                      await Future.delayed(const Duration(seconds: 1));
+                      // Llamar al servicio para actualizar vehículo
+                      await _vehicleService.updateVehicle(
+                        vehicle.id,
+                        _brandController.text.trim(),
+                        _modelController.text.trim(),
+                        _colorController.text.trim(),
+                      );
 
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -357,7 +360,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
       itemBuilder: (context, index) {
         final vehicle = _vehicles[index];
         return Dismissible(
-          key: Key(vehicle['id']),
+          key: Key(vehicle.id),
           background: Container(
             color: Colors.red,
             alignment: Alignment.centerRight,
@@ -372,7 +375,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                   (context) => AlertDialog(
                     title: const Text('Eliminar Vehículo'),
                     content: Text(
-                      '¿Estás seguro de eliminar el vehículo ${vehicle['plateNumber']}?',
+                      '¿Estás seguro de eliminar el vehículo ${vehicle.plateNumber}?',
                     ),
                     actions: [
                       TextButton(
@@ -392,7 +395,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
           },
           onDismissed: (direction) async {
             try {
-              await _parkingService.deleteVehicle(vehicle['id']);
+              await _vehicleService.deleteVehicle(vehicle.id);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Vehículo eliminado correctamente'),
@@ -428,7 +431,7 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          vehicle['plateNumber'],
+                          vehicle.plateNumber,
                           style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
@@ -436,12 +439,12 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${vehicle['brand']} ${vehicle['model']}',
+                          '${vehicle.brand} ${vehicle.model}',
                           style: const TextStyle(fontSize: 14),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Color: ${vehicle['color']}',
+                          'Color: ${vehicle.color}',
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey[600],

@@ -6,6 +6,7 @@ const projectId = serviceAccount.project_id;
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
+  databaseURL: `https://${projectId}.firebaseio.com`,
   storageBucket: `${projectId}.appspot.com`
 });
 

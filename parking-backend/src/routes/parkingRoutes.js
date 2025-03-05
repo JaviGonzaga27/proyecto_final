@@ -13,6 +13,7 @@ router.use(verifyToken);
 router.get('/', parkingController.getAllSpots);
 router.get('/available', parkingController.getAvailableSpots);
 router.post('/entry', parkingController.registerEntry);
+router.post('/create-test-spots', parkingController.createTestSpots);
 router.post('/exit', parkingController.registerExit);
 router.get('/history', parkingController.getParkingHistory);
 

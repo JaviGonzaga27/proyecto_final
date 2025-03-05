@@ -1,10 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../models/parking_spot_model.dart';
+import '../models/parking_history_model.dart';
 
 class ParkingService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -12,12 +13,26 @@ class ParkingService {
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
   // URL de tu API backend
-  final String apiUrl = 'http://localhost:3000/api';
+  final String apiUrl = 'http://192.168.1.6:3000/api';
 
   // Obtener todos los espacios de estacionamiento
   Future<List<ParkingSpot>> getAllSpots() async {
     try {
+      final user = _auth.currentUser;
+      if (user == null) return [];
+
+      // Para depuración
+      print('Obteniendo espacios de estacionamiento...');
+
+      // Obtener desde Firestore directamente para depuración
       final snapshot = await _firestore.collection('parking_spots').get();
+
+      print('Espacios encontrados: ${snapshot.docs.length}');
+
+      if (snapshot.docs.isEmpty) {
+        print('ADVERTENCIA: No hay espacios en la base de datos');
+      }
+
       return snapshot.docs
           .map((doc) => ParkingSpot.fromJson({'id': doc.id, ...doc.data()}))
           .toList();
@@ -30,6 +45,34 @@ class ParkingService {
   // Obtener espacios disponibles
   Future<List<ParkingSpot>> getAvailableSpots() async {
     try {
+      // Intentar con backend
+      final user = _auth.currentUser;
+      if (user != null) {
+        final token = await user.getIdToken();
+
+        try {
+          final response = await http.get(
+            Uri.parse('$apiUrl/parking/available'),
+            headers: {'Authorization': 'Bearer $token'},
+          );
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            if (data['success'] && data['data'] != null) {
+              final List<dynamic> spotsJson = data['data'];
+              return spotsJson
+                  .map(
+                    (json) => ParkingSpot.fromJson({'id': json['id'], ...json}),
+                  )
+                  .toList();
+            }
+          }
+        } catch (e) {
+          print('Error con API backend, usando Firestore: $e');
+        }
+      }
+
+      // Fallback a Firestore
       final snapshot =
           await _firestore
               .collection('parking_spots')
@@ -51,6 +94,27 @@ class ParkingService {
       final user = _auth.currentUser;
       if (user == null) return false;
 
+      // Intentar con backend
+      final token = await user.getIdToken();
+
+      try {
+        final response = await http.post(
+          Uri.parse('$apiUrl/parking/reserve'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'spotId': spotId, 'userId': user.uid}),
+        );
+
+        if (response.statusCode == 200) {
+          return true;
+        }
+      } catch (e) {
+        print('Error con API backend, usando Firestore: $e');
+      }
+
+      // Fallback a Firestore
       // Verificar disponibilidad
       final spotDoc =
           await _firestore.collection('parking_spots').doc(spotId).get();
@@ -64,27 +128,6 @@ class ParkingService {
         'userId': user.uid,
         'reservationTime': FieldValue.serverTimestamp(),
       });
-
-      // Enviar al backend
-      final token = await user.getIdToken();
-      final response = await http.post(
-        Uri.parse('$apiUrl/parking/reserve'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({'spotId': spotId, 'userId': user.uid}),
-      );
-
-      if (response.statusCode != 200) {
-        // Revertir la reserva si el backend falla
-        await _firestore.collection('parking_spots').doc(spotId).update({
-          'status': 'available',
-          'userId': null,
-          'reservationTime': null,
-        });
-        return false;
-      }
 
       return true;
     } catch (e) {
@@ -103,17 +146,71 @@ class ParkingService {
       final user = _auth.currentUser;
       if (user == null) return false;
 
+      // Si hay imagen, primero subirla a Storage
       String? imageUrl;
-
-      // Si se proporciona una imagen, subirla a Firebase Storage
       if (plateImage != null) {
-        final ref = _storage.ref().child(
-          'plates/${DateTime.now().millisecondsSinceEpoch}_$plateNumber.jpg',
-        );
-        await ref.putFile(plateImage);
-        imageUrl = await ref.getDownloadURL();
+        // Intentar reconocimiento de placa con backend
+        final token = await user.getIdToken();
+
+        try {
+          // Crear formulario multipart
+          var request = http.MultipartRequest(
+            'POST',
+            Uri.parse('$apiUrl/plate-recognition/recognize'),
+          );
+
+          request.headers['Authorization'] = 'Bearer $token';
+          request.files.add(
+            await http.MultipartFile.fromPath('image', plateImage.path),
+          );
+
+          var streamedResponse = await request.send();
+          var response = await http.Response.fromStream(streamedResponse);
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            if (data['success']) {
+              imageUrl = data['imageUrl'];
+            }
+          }
+        } catch (e) {
+          print('Error con API de reconocimiento: $e');
+
+          // Fallback: subir a Firebase Storage
+          final ref = _storage.ref().child(
+            'plates/${DateTime.now().millisecondsSinceEpoch}_$plateNumber.jpg',
+          );
+          await ref.putFile(plateImage);
+          imageUrl = await ref.getDownloadURL();
+        }
       }
 
+      // Intentar con backend
+      final token = await user.getIdToken();
+
+      try {
+        final response = await http.post(
+          Uri.parse('$apiUrl/parking/entry'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'spotId': spotId,
+            'userId': user.uid,
+            'plateNumber': plateNumber,
+            'imageUrl': imageUrl,
+          }),
+        );
+
+        if (response.statusCode == 200) {
+          return true;
+        }
+      } catch (e) {
+        print('Error con API backend, usando Firestore: $e');
+      }
+
+      // Fallback a Firestore
       // Verificar disponibilidad
       final spotDoc =
           await _firestore.collection('parking_spots').doc(spotId).get();
@@ -155,27 +252,6 @@ class ParkingService {
       // Ejecutar el batch
       await batch.commit();
 
-      // Enviar al backend
-      try {
-        final token = await user.getIdToken();
-        await http.post(
-          Uri.parse('$apiUrl/parking/entry'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode({
-            'spotId': spotId,
-            'userId': user.uid,
-            'plateNumber': plateNumber,
-            'imageUrl': imageUrl,
-          }),
-        );
-      } catch (e) {
-        print('Error al registrar entrada en backend: $e');
-        // Continuamos aun si falla el backend
-      }
-
       return true;
     } catch (e) {
       print('Error al registrar entrada: $e');
@@ -190,6 +266,34 @@ class ParkingService {
       if (user == null)
         return {'success': false, 'message': 'Usuario no autenticado'};
 
+      // Intentar con backend
+      final token = await user.getIdToken();
+
+      try {
+        final response = await http.post(
+          Uri.parse('$apiUrl/parking/exit'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'spotId': spotId, 'paymentMethod': 'app'}),
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['success']) {
+            return {
+              'success': true,
+              'amount': data['data']['amount'],
+              'duration': data['data']['duration'],
+            };
+          }
+        }
+      } catch (e) {
+        print('Error con API backend, usando Firestore: $e');
+      }
+
+      // Fallback a Firestore
       // Verificar ocupación
       final spotDoc =
           await _firestore.collection('parking_spots').doc(spotId).get();
@@ -267,27 +371,6 @@ class ParkingService {
       // Ejecutar el batch
       await batch.commit();
 
-      // Enviar al backend
-      try {
-        final token = await user.getIdToken();
-        await http.post(
-          Uri.parse('$apiUrl/parking/exit'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode({
-            'spotId': spotId,
-            'historyId': historyDoc.id,
-            'amount': amount,
-            'paymentMethod': 'app',
-          }),
-        );
-      } catch (e) {
-        print('Error al registrar salida en backend: $e');
-        // Continuamos aun si falla el backend
-      }
-
       // Devolver resultado
       return {
         'success': true,
@@ -303,11 +386,37 @@ class ParkingService {
   }
 
   // Obtener historial de estacionamiento del usuario
-  Future<List<Map<String, dynamic>>> getUserParkingHistory() async {
+  Future<List<ParkingHistoryModel>> getUserParkingHistory() async {
     try {
       final user = _auth.currentUser;
       if (user == null) return [];
 
+      // Intentar con backend
+      final token = await user.getIdToken();
+
+      try {
+        final response = await http.get(
+          Uri.parse('$apiUrl/users/${user.uid}/parking-history'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['success'] && data['data'] != null) {
+            final List<dynamic> historyJson = data['data'];
+            return historyJson
+                .map(
+                  (json) =>
+                      ParkingHistoryModel.fromJson({'id': json['id'], ...json}),
+                )
+                .toList();
+          }
+        }
+      } catch (e) {
+        print('Error con API backend, usando Firestore: $e');
+      }
+
+      // Fallback a Firestore
       final snapshot =
           await _firestore
               .collection('parking_history')
@@ -315,7 +424,12 @@ class ParkingService {
               .orderBy('entryTime', descending: true)
               .get();
 
-      return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+      return snapshot.docs
+          .map(
+            (doc) =>
+                ParkingHistoryModel.fromJson({'id': doc.id, ...doc.data()}),
+          )
+          .toList();
     } catch (e) {
       print('Error al obtener historial: $e');
       return [];
@@ -323,11 +437,37 @@ class ParkingService {
   }
 
   // Obtener estacionamientos activos del usuario
-  Future<List<Map<String, dynamic>>> getUserActiveParking() async {
+  Future<List<ParkingHistoryModel>> getUserActiveParking() async {
     try {
       final user = _auth.currentUser;
       if (user == null) return [];
 
+      // Intentar con backend
+      final token = await user.getIdToken();
+
+      try {
+        final response = await http.get(
+          Uri.parse('$apiUrl/users/${user.uid}/parking-history?status=active'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['success'] && data['data'] != null) {
+            final List<dynamic> historyJson = data['data'];
+            return historyJson
+                .map(
+                  (json) =>
+                      ParkingHistoryModel.fromJson({'id': json['id'], ...json}),
+                )
+                .toList();
+          }
+        }
+      } catch (e) {
+        print('Error con API backend, usando Firestore: $e');
+      }
+
+      // Fallback a Firestore
       final snapshot =
           await _firestore
               .collection('parking_history')
@@ -335,150 +475,14 @@ class ParkingService {
               .where('status', isEqualTo: 'active')
               .get();
 
-      return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+      return snapshot.docs
+          .map(
+            (doc) =>
+                ParkingHistoryModel.fromJson({'id': doc.id, ...doc.data()}),
+          )
+          .toList();
     } catch (e) {
       print('Error al obtener estacionamientos activos: $e');
-      return [];
-    }
-  }
-
-  // Reconocer placa desde imagen
-  Future<String?> recognizePlate(File imageFile) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return null;
-
-      // Subir imagen a Storage temporalmente para el reconocimiento
-      final ref = _storage.ref().child(
-        'temp_plates/${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-      await ref.putFile(imageFile);
-      final imageUrl = await ref.getDownloadURL();
-
-      // Enviar al backend para reconocimiento
-      final token = await user.getIdToken();
-      final response = await http.post(
-        Uri.parse('$apiUrl/plate-recognition/recognize'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({'imageUrl': imageUrl}),
-      );
-
-      if (response.statusCode != 200) {
-        return null;
-      }
-
-      final data = jsonDecode(response.body);
-
-      // Eliminar archivo temporal
-      await ref.delete();
-
-      return data['plateNumber'];
-    } catch (e) {
-      print('Error al reconocer placa: $e');
-      return null;
-    }
-  }
-
-  // Obtener vehículos del usuario
-  Future<List<Map<String, dynamic>>> getUserVehicles() async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return [];
-
-      final snapshot =
-          await _firestore
-              .collection('vehicles')
-              .where('userId', isEqualTo: user.uid)
-              .get();
-
-      return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
-    } catch (e) {
-      print('Error al obtener vehículos: $e');
-      return [];
-    }
-  }
-
-  // Agregar vehículo
-  Future<bool> addVehicle(
-    String plateNumber,
-    String brand,
-    String model,
-    String color,
-  ) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return false;
-
-      // Verificar si la placa ya existe
-      final existingVehicle =
-          await _firestore
-              .collection('vehicles')
-              .where('plateNumber', isEqualTo: plateNumber)
-              .get();
-
-      if (existingVehicle.docs.isNotEmpty) {
-        return false;
-      }
-
-      // Agregar vehículo
-      await _firestore.collection('vehicles').add({
-        'userId': user.uid,
-        'plateNumber': plateNumber,
-        'brand': brand,
-        'model': model,
-        'color': color,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      return true;
-    } catch (e) {
-      print('Error al agregar vehículo: $e');
-      return false;
-    }
-  }
-
-  // Eliminar vehículo
-  Future<bool> deleteVehicle(String vehicleId) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return false;
-
-      // Verificar que el vehículo pertenezca al usuario
-      final vehicleDoc =
-          await _firestore.collection('vehicles').doc(vehicleId).get();
-      if (!vehicleDoc.exists || vehicleDoc.data()?['userId'] != user.uid) {
-        return false;
-      }
-
-      // Eliminar vehículo
-      await _firestore.collection('vehicles').doc(vehicleId).delete();
-
-      return true;
-    } catch (e) {
-      print('Error al eliminar vehículo: $e');
-      return false;
-    }
-  }
-
-  // Obtener pagos del usuario
-  Future<List<Map<String, dynamic>>> getUserPayments() async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return [];
-
-      final snapshot =
-          await _firestore
-              .collection('payments')
-              .where('userId', isEqualTo: user.uid)
-              .orderBy('createdAt', descending: true)
-              .get();
-
-      return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
-    } catch (e) {
-      print('Error al obtener pagos: $e');
       return [];
     }
   }
