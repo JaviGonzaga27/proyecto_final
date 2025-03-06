@@ -1,3 +1,4 @@
+// lib/models/parking_history_model.dart
 class ParkingHistoryModel {
   final String id;
   final String parkingSpotId;
@@ -9,7 +10,7 @@ class ParkingHistoryModel {
   final String? plateImageUrl;
   final DateTime entryTime;
   final DateTime? exitTime;
-  final double? duration;
+  final double? duration; // duración en horas
   final double? amount;
   final String status; // 'active', 'completed', 'cancelled'
   final String? paymentId;

@@ -7,6 +7,8 @@ import '../parking/scan_plate_screen.dart';
 import '../parking/parking_spot_screen.dart';
 import '../profile/profile_screen.dart';
 import '../vehicles/vehicles_screen.dart';
+import '../parking/parking_history_screen.dart';
+import '../payments/payment_history_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -237,7 +239,27 @@ class DashboardHomePage extends StatelessWidget {
             Icons.history,
             Colors.teal,
             () {
-              // Implementar historial
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ParkingHistoryScreen(),
+                ),
+              );
+            },
+          ),
+          _buildActionButton(
+            context,
+            'Pagos realizados',
+            'Consulta tus pagos de estacionamiento',
+            Icons.payment,
+            Colors.purple,
+            () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const PaymentHistoryScreen(),
+                ),
+              );
             },
           ),
         ],
